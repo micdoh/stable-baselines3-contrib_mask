@@ -95,6 +95,9 @@ class MaskablePPO(OnPolicyAlgorithm):
         verbose: int = 0,
         seed: Optional[int] = None,
         device: Union[th.device, str] = "auto",
+        recurrent_masking: bool = False,
+        recurrent_masking_terms: List[str] = ["nodes_selected"]
+        action_interpreter: str = "select_nodes_paths_slots"
         _init_setup_model: bool = True,
     ):
         super().__init__(
@@ -128,6 +131,9 @@ class MaskablePPO(OnPolicyAlgorithm):
         self.clip_range_vf = clip_range_vf
         self.normalize_advantage = normalize_advantage
         self.target_kl = target_kl
+        self.recurrent_masking = recurrent_masking
+        self.recurrent_masking_terms = recurrent_masking_terms
+        self.action_interpreter = getattr(env, action_interpreter)
 
         if _init_setup_model:
             self._setup_model()
@@ -293,9 +299,22 @@ class MaskablePPO(OnPolicyAlgorithm):
 
                 # This is the only change related to invalid action masking
                 if use_masking:
+                    
                     action_masks = get_action_masks(env)
+                    actions, values, log_probs = self.policy(obs_tensor, action_masks=action_masks)
+                    
+                    if recurrent_masking:
+                        
+                        for n, term in enumerate(recurring_masking_terms):
 
-                actions, values, log_probs = self.policy(obs_tensor, action_masks=action_masks)
+                            selection = action_interpreter(actions)[n]
+                            env.setattr(term, selection)
+                            
+                            action_masks = get_action_masks(env)
+                            actions, values, log_probs = self.policy(obs_tensor, action_masks=action_masks)
+                    
+                else:
+                    actions, values, log_probs = self.policy(obs_tensor, action_masks=action_masks)
 
             actions = actions.cpu().numpy()
             new_obs, rewards, dones, infos = env.step(actions)
