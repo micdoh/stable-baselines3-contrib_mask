@@ -1,7 +1,7 @@
 import sys
 import time
 from collections import deque
-from typing import Any, Dict, Optional, Tuple, Type, TypeVar, Union
+from typing import Any, Dict, Optional, Tuple, Type, TypeVar, Union, List
 
 import numpy as np
 import torch as th
@@ -64,6 +64,9 @@ class MaskablePPO(OnPolicyAlgorithm):
     :param seed: Seed for the pseudo random generators
     :param device: Device (cpu, cuda, ...) on which the code should be run.
         Setting it to auto, the code will be run on the GPU if possible.
+    :param recurrent_masking:
+    :param recurrent_masking_terms:
+    :param action_interpreter:
     :param _init_setup_model: Whether or not to build the network at the creation of the instance
     """
 
@@ -96,8 +99,8 @@ class MaskablePPO(OnPolicyAlgorithm):
         seed: Optional[int] = None,
         device: Union[th.device, str] = "auto",
         recurrent_masking: bool = False,
-        recurrent_masking_terms: List[str] = ["nodes_selected"]
-        action_interpreter: str = "select_nodes_paths_slots"
+        recurrent_masking_terms: List[str] = ["nodes_selected"],
+        action_interpreter: str = "select_nodes_paths_slots",
         _init_setup_model: bool = True,
     ):
         super().__init__(
@@ -133,7 +136,7 @@ class MaskablePPO(OnPolicyAlgorithm):
         self.target_kl = target_kl
         self.recurrent_masking = recurrent_masking
         self.recurrent_masking_terms = recurrent_masking_terms
-        self.action_interpreter = getattr(env, action_interpreter)
+        self.action_interpreter = env.get_attr(action_interpreter)[0]
 
         if _init_setup_model:
             self._setup_model()
@@ -301,22 +304,35 @@ class MaskablePPO(OnPolicyAlgorithm):
                 if use_masking:
                     
                     action_masks = get_action_masks(env)
-                    actions, values, log_probs = self.policy(obs_tensor, action_masks=action_masks)
+                    actions, values, log_probs = self.policy(
+                        obs_tensor,
+                        action_masks=action_masks,
+                        deterministic=False,#self.recurrent_masking,
+                    )
+                    actions = actions.cpu().numpy()
                     
-                    if recurrent_masking:
-                        
-                        for n, term in enumerate(recurring_masking_terms):
+                    if self.recurrent_masking:
 
-                            selection = action_interpreter(actions)[n]
-                            env.setattr(term, selection)
+                        for n, term in enumerate(self.recurrent_masking_terms):
+
+                            actions = actions[0]
+                            final_actions = actions
+                            selection = self.action_interpreter(actions)[n]
+                            env.set_attr(term, selection)
                             
                             action_masks = get_action_masks(env)
-                            actions, values, log_probs = self.policy(obs_tensor, action_masks=action_masks)
+                            actions, values, log_probs = self.policy(
+                                obs_tensor,
+                                action_masks=action_masks,
+                                deterministic=False,#self.recurrent_masking,
+                            )
+                            actions = actions.cpu().numpy()
+                            actions[0][:n+1] = final_actions[:n+1]
                     
                 else:
                     actions, values, log_probs = self.policy(obs_tensor, action_masks=action_masks)
+                    actions = actions.cpu().numpy()
 
-            actions = actions.cpu().numpy()
             new_obs, rewards, dones, infos = env.step(actions)
 
             self.num_timesteps += env.num_envs
