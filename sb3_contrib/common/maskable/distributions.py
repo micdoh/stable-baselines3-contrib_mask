@@ -35,7 +35,7 @@ class MaskableCategorical(Categorical):
         self,
         probs: Optional[th.Tensor] = None,
         logits: Optional[th.Tensor] = None,
-        validate_args: Optional[bool] = None,
+        validate_args: Optional[bool] = False,
         masks: Optional[np.ndarray] = None,
     ):
         self.masks: Optional[th.Tensor] = None
