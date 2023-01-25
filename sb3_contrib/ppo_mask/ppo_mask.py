@@ -64,10 +64,10 @@ class MaskablePPO(OnPolicyAlgorithm):
     :param seed: Seed for the pseudo random generators
     :param device: Device (cpu, cuda, ...) on which the code should be run.
         Setting it to auto, the code will be run on the GPU if possible.
-    :param recurrent_masking:
-    :param recurrent_masking_terms:
+    :param multistep_masking:
+    :param multistep_masking_terms:
     :param action_interpreter:
-    :param _init_setup_model: Whether or not to build the network at the creation of the instance
+    :param _init_setup_model: Whether to build the network at the creation of the instance
     """
 
     policy_aliases: Dict[str, Type[BasePolicy]] = {
@@ -77,31 +77,31 @@ class MaskablePPO(OnPolicyAlgorithm):
     }
 
     def __init__(
-        self,
-        policy: Union[str, Type[MaskableActorCriticPolicy]],
-        env: Union[GymEnv, str],
-        learning_rate: Union[float, Schedule] = 3e-4,
-        n_steps: int = 2048,
-        batch_size: Optional[int] = 64,
-        n_epochs: int = 10,
-        gamma: float = 0.99,
-        gae_lambda: float = 0.95,
-        clip_range: Union[float, Schedule] = 0.2,
-        clip_range_vf: Union[None, float, Schedule] = None,
-        normalize_advantage: bool = True,
-        ent_coef: float = 0.0,
-        vf_coef: float = 0.5,
-        max_grad_norm: float = 0.5,
-        target_kl: Optional[float] = None,
-        tensorboard_log: Optional[str] = None,
-        policy_kwargs: Optional[Dict[str, Any]] = None,
-        verbose: int = 0,
-        seed: Optional[int] = None,
-        device: Union[th.device, str] = "auto",
-        recurrent_masking: bool = False,
-        recurrent_masking_terms: List[str] = ["nodes_selected"],
-        action_interpreter: str = "select_nodes_paths_slots",
-        _init_setup_model: bool = True,
+            self,
+            policy: Union[str, Type[MaskableActorCriticPolicy]],
+            env: Union[GymEnv, str],
+            learning_rate: Union[float, Schedule] = 3e-4,
+            n_steps: int = 2048,
+            batch_size: Optional[int] = 64,
+            n_epochs: int = 10,
+            gamma: float = 0.99,
+            gae_lambda: float = 0.95,
+            clip_range: Union[float, Schedule] = 0.2,
+            clip_range_vf: Union[None, float, Schedule] = None,
+            normalize_advantage: bool = True,
+            ent_coef: float = 0.0,
+            vf_coef: float = 0.5,
+            max_grad_norm: float = 0.5,
+            target_kl: Optional[float] = None,
+            tensorboard_log: Optional[str] = None,
+            policy_kwargs: Optional[Dict[str, Any]] = None,
+            verbose: int = 0,
+            seed: Optional[int] = None,
+            device: Union[th.device, str] = "auto",
+            multistep_masking: bool = False,
+            multistep_masking_terms: List[str] = [],
+            action_interpreter: str = "",
+            _init_setup_model: bool = True,
     ):
         super().__init__(
             policy,
@@ -134,8 +134,8 @@ class MaskablePPO(OnPolicyAlgorithm):
         self.clip_range_vf = clip_range_vf
         self.normalize_advantage = normalize_advantage
         self.target_kl = target_kl
-        self.recurrent_masking = recurrent_masking
-        self.recurrent_masking_terms = recurrent_masking_terms
+        self.multistep_masking = multistep_masking
+        self.multistep_masking_terms = multistep_masking_terms
         self.action_interpreter = env.get_attr(action_interpreter)[0]
 
         if _init_setup_model:
@@ -145,7 +145,8 @@ class MaskablePPO(OnPolicyAlgorithm):
         self._setup_lr_schedule()
         self.set_random_seed(self.seed)
 
-        buffer_cls = MaskableDictRolloutBuffer if isinstance(self.observation_space, spaces.Dict) else MaskableRolloutBuffer
+        buffer_cls = MaskableDictRolloutBuffer if isinstance(self.observation_space,
+                                                             spaces.Dict) else MaskableRolloutBuffer
 
         self.policy = self.policy_class(
             self.observation_space,
@@ -177,14 +178,14 @@ class MaskablePPO(OnPolicyAlgorithm):
             self.clip_range_vf = get_schedule_fn(self.clip_range_vf)
 
     def _init_callback(
-        self,
-        callback: MaybeCallback,
-        use_masking: bool = True,
-        progress_bar: bool = False,
+            self,
+            callback: MaybeCallback,
+            use_masking: bool = True,
+            progress_bar: bool = False,
     ) -> BaseCallback:
         """
         :param callback: Callback(s) called at every step with state of the algorithm.
-        :param use_masking: Whether or not to use invalid action masks during evaluation
+        :param use_masking: Whether to use invalid action masks during evaluation
         :param progress_bar: Display a progress bar using tqdm and rich.
         :return: A hybrid callback calling `callback` and performing evaluation.
         """
@@ -204,13 +205,13 @@ class MaskablePPO(OnPolicyAlgorithm):
         return callback
 
     def _setup_learn(
-        self,
-        total_timesteps: int,
-        callback: MaybeCallback = None,
-        reset_num_timesteps: bool = True,
-        tb_log_name: str = "run",
-        use_masking: bool = True,
-        progress_bar: bool = False,
+            self,
+            total_timesteps: int,
+            callback: MaybeCallback = None,
+            reset_num_timesteps: bool = True,
+            tb_log_name: str = "run",
+            use_masking: bool = True,
+            progress_bar: bool = False,
     ) -> Tuple[int, BaseCallback]:
         """
         Initialize different variables needed for training.
@@ -219,7 +220,7 @@ class MaskablePPO(OnPolicyAlgorithm):
         :param callback: Callback(s) called at every step with state of the algorithm.
         :param reset_num_timesteps: Whether to reset or not the ``num_timesteps`` attribute
         :param tb_log_name: the name of the run for tensorboard log
-        :param use_masking: Whether or not to use invalid action masks during training
+        :param use_masking: Whether to use invalid action masks during training
         :param progress_bar: Display a progress bar using tqdm and rich.
         :return:
         """
@@ -256,12 +257,12 @@ class MaskablePPO(OnPolicyAlgorithm):
         return total_timesteps, callback
 
     def collect_rollouts(
-        self,
-        env: VecEnv,
-        callback: BaseCallback,
-        rollout_buffer: RolloutBuffer,
-        n_rollout_steps: int,
-        use_masking: bool = True,
+            self,
+            env: VecEnv,
+            callback: BaseCallback,
+            rollout_buffer: RolloutBuffer,
+            n_rollout_steps: int,
+            use_masking: bool = True,
     ) -> bool:
         """
         Collect experiences using the current policy and fill a ``RolloutBuffer``.
@@ -275,7 +276,7 @@ class MaskablePPO(OnPolicyAlgorithm):
             (and at the beginning and end of the rollout)
         :param rollout_buffer: Buffer to fill with rollouts
         :param n_steps: Number of experiences to collect per environment
-        :param use_masking: Whether or not to use invalid action masks during training
+        :param use_masking: Whether to use invalid action masks during training
         :return: True if function returned with at least `n_rollout_steps`
             collected, False if callback terminated rollout prematurely.
         """
@@ -302,33 +303,32 @@ class MaskablePPO(OnPolicyAlgorithm):
 
                 # This is the only change related to invalid action masking
                 if use_masking:
-                    
+
                     action_masks = get_action_masks(env)
                     actions, values, log_probs = self.policy(
                         obs_tensor,
                         action_masks=action_masks,
-                        deterministic=False,#self.recurrent_masking,
+                        deterministic=False,
                     )
                     actions = actions.cpu().numpy()
-                    
-                    if self.recurrent_masking:
 
-                        for n, term in enumerate(self.recurrent_masking_terms):
+                    if self.multistep_masking:
 
+                        for n, term in enumerate(self.multistep_masking_terms):
                             actions = actions[0]
                             final_actions = actions
                             selection = self.action_interpreter(actions)[n]
                             env.set_attr(term, selection)
-                            
+
                             action_masks = get_action_masks(env)
                             actions, values, log_probs = self.policy(
                                 obs_tensor,
                                 action_masks=action_masks,
-                                deterministic=False,#self.recurrent_masking,
+                                deterministic=False,
                             )
                             actions = actions.cpu().numpy()
-                            actions[0][:n+1] = final_actions[:n+1]
-                    
+                            actions[0][:n + 1] = final_actions[:n + 1]
+
                 else:
                     actions, values, log_probs = self.policy(obs_tensor, action_masks=action_masks)
                     actions = actions.cpu().numpy()
@@ -353,9 +353,9 @@ class MaskablePPO(OnPolicyAlgorithm):
             # see GitHub issue #633
             for idx, done in enumerate(dones):
                 if (
-                    done
-                    and infos[idx].get("terminal_observation") is not None
-                    and infos[idx].get("TimeLimit.truncated", False)
+                        done
+                        and infos[idx].get("terminal_observation") is not None
+                        and infos[idx].get("TimeLimit.truncated", False)
                 ):
                     terminal_obs = self.policy.obs_to_tensor(infos[idx]["terminal_observation"])[0]
                     with th.no_grad():
@@ -387,12 +387,13 @@ class MaskablePPO(OnPolicyAlgorithm):
         return True
 
     def predict(
-        self,
-        observation: np.ndarray,
-        state: Optional[Tuple[np.ndarray, ...]] = None,
-        episode_start: Optional[np.ndarray] = None,
-        deterministic: bool = False,
-        action_masks: Optional[np.ndarray] = None,
+            self,
+            observation: np.ndarray,
+            state: Optional[Tuple[np.ndarray, ...]] = None,
+            episode_start: Optional[np.ndarray] = None,
+            deterministic: bool = False,
+            action_masks: Optional[np.ndarray] = None,
+            env: VecEnv = None,
     ) -> Tuple[np.ndarray, Optional[Tuple[np.ndarray, ...]]]:
         """
         Get the policy action from an observation (and optional hidden state).
@@ -401,13 +402,29 @@ class MaskablePPO(OnPolicyAlgorithm):
         :param observation: the input observation
         :param state: The last hidden states (can be None, used in recurrent policies)
         :param episode_start: The last masks (can be None, used in recurrent policies)
-            this correspond to beginning of episodes,
+            this corresponds to beginning of episodes,
             where the hidden states of the RNN must be reset.
-        :param deterministic: Whether or not to return deterministic actions.
+        :param deterministic: Whether to return deterministic actions.
         :return: the model's action and the next hidden state
             (used in recurrent policies)
         """
-        return self.policy.predict(observation, state, episode_start, deterministic, action_masks=action_masks)
+        actions, states = self.policy.predict(observation, state, episode_start, deterministic,
+                                              action_masks=action_masks)
+
+        if self.multistep_masking:
+
+            for n, term in enumerate(self.multistep_masking_terms):
+                actions = actions[0]
+                final_actions = actions
+                selection = self.action_interpreter(actions)[n]
+                env.set_attr(term, selection)
+
+                action_masks = get_action_masks(env)
+                actions, states = self.policy.predict(observation, state, episode_start, deterministic,
+                                                      action_masks=action_masks)
+                actions[0][:n + 1] = final_actions[:n + 1]
+
+        return actions, states
 
     def train(self) -> None:
         """
@@ -530,14 +547,14 @@ class MaskablePPO(OnPolicyAlgorithm):
             self.logger.record("train/clip_range_vf", clip_range_vf)
 
     def learn(
-        self: SelfMaskablePPO,
-        total_timesteps: int,
-        callback: MaybeCallback = None,
-        log_interval: int = 1,
-        tb_log_name: str = "PPO",
-        reset_num_timesteps: bool = True,
-        use_masking: bool = True,
-        progress_bar: bool = False,
+            self: SelfMaskablePPO,
+            total_timesteps: int,
+            callback: MaybeCallback = None,
+            log_interval: int = 1,
+            tb_log_name: str = "PPO",
+            reset_num_timesteps: bool = True,
+            use_masking: bool = True,
+            progress_bar: bool = False,
     ) -> SelfMaskablePPO:
         iteration = 0
 
@@ -553,7 +570,8 @@ class MaskablePPO(OnPolicyAlgorithm):
         callback.on_training_start(locals(), globals())
 
         while self.num_timesteps < total_timesteps:
-            continue_training = self.collect_rollouts(self.env, callback, self.rollout_buffer, self.n_steps, use_masking)
+            continue_training = self.collect_rollouts(self.env, callback, self.rollout_buffer, self.n_steps,
+                                                      use_masking)
 
             if continue_training is False:
                 break
@@ -567,8 +585,10 @@ class MaskablePPO(OnPolicyAlgorithm):
                 fps = int((self.num_timesteps - self._num_timesteps_at_start) / time_elapsed)
                 self.logger.record("time/iterations", iteration, exclude="tensorboard")
                 if len(self.ep_info_buffer) > 0 and len(self.ep_info_buffer[0]) > 0:
-                    self.logger.record("rollout/ep_rew_mean", safe_mean([ep_info["r"] for ep_info in self.ep_info_buffer]))
-                    self.logger.record("rollout/ep_len_mean", safe_mean([ep_info["l"] for ep_info in self.ep_info_buffer]))
+                    self.logger.record("rollout/ep_rew_mean",
+                                       safe_mean([ep_info["r"] for ep_info in self.ep_info_buffer]))
+                    self.logger.record("rollout/ep_len_mean",
+                                       safe_mean([ep_info["l"] for ep_info in self.ep_info_buffer]))
                 self.logger.record("time/fps", fps)
                 self.logger.record("time/time_elapsed", int(time_elapsed), exclude="tensorboard")
                 self.logger.record("time/total_timesteps", self.num_timesteps, exclude="tensorboard")

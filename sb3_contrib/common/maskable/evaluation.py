@@ -98,6 +98,7 @@ def evaluate_policy(  # noqa: C901
                 episode_start=episode_starts,
                 deterministic=deterministic,
                 action_masks=action_masks,
+                env=env,
             )
         else:
             actions, states = model.predict(
