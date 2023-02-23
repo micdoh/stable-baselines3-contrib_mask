@@ -64,9 +64,9 @@ class MaskablePPO(OnPolicyAlgorithm):
     :param seed: Seed for the pseudo random generators
     :param device: Device (cpu, cuda, ...) on which the code should be run.
         Setting it to auto, the code will be run on the GPU if possible.
-    :param multistep_masking:
-    :param multistep_masking_terms:
-    :param action_interpreter:
+    :param multistep_masking: Whether to use multistep masking
+    :param multistep_masking_terms: List of env attributes to be accessed in order at each multistep masking step
+    :param action_interpreter: Name of environment method used to interpret actions of agent
     :param _init_setup_model: Whether to build the network at the creation of the instance
     """
 
@@ -312,23 +312,39 @@ class MaskablePPO(OnPolicyAlgorithm):
                     )
                     actions = actions.cpu().numpy()
 
+                    # If we are using multistep masking, we need to mask the action in steps
                     if self.multistep_masking:
 
+                        # Loop through the environment attributes that are set at each masking step
                         for n, term in enumerate(self.multistep_masking_terms):
+
+                            # Actions are first (and only) item in array
                             actions = actions[0]
+
+                            # Save the actions that have been taken so far
                             final_actions = actions
+
                             # TODO - Retain values and log probs similar to actions
                             # (not doing this may be equivalent to naive action masking)
+
+                            # Interpret integer action into 'real' action/selection
                             selection = self.action_interpreter(actions)[n]
+
+                            # Set the environment attribute to the selection
                             env.set_attr(term, selection)
 
+                            # Get the new action masks (env mask function will use attribute that was set)
                             action_masks = get_action_masks(env)
+
+                            # Get the new actions
                             actions, values, log_probs = self.policy(
                                 obs_tensor,
                                 action_masks=action_masks,
                                 deterministic=False,
                             )
                             actions = actions.cpu().numpy()
+
+                            # Retain previously taken (masked) actions and add new masked actions
                             actions[0][:n + 1] = final_actions[:n + 1]
 
                 else:
@@ -413,17 +429,35 @@ class MaskablePPO(OnPolicyAlgorithm):
         actions, states = self.policy.predict(observation, state, episode_start, deterministic,
                                               action_masks=action_masks)
 
+        # If we are using multistep masking, we need to mask the action in steps
         if self.multistep_masking:
 
+            # Loop through the environment attributes that are set at each masking step
             for n, term in enumerate(self.multistep_masking_terms):
+
+                # Actions are first (and only) item in array
                 actions = actions[0]
+
+                # Save the actions that have been taken so far
                 final_actions = actions
+
+                # Interpret integer action into 'real' action/selection
                 selection = self.action_interpreter(actions)[n]
+
+                # Set the environment attribute to the selection
                 env.set_attr(term, selection)
 
+                # Get the new action masks (env mask function will use attribute that was set)
                 action_masks = get_action_masks(env)
+
+                # Get the new actions
                 actions, states = self.policy.predict(observation, state, episode_start, deterministic,
                                                       action_masks=action_masks)
+
+                # Retain previously taken (masked) actions and add new masked actions
+                # This step is necessary as previously taken actions may change with each forward pass during training,
+                # even when the same mask is supplied and same observation.
+                # This is due to stochastic action sampling during training.
                 actions[0][:n + 1] = final_actions[:n + 1]
 
         return actions, states
