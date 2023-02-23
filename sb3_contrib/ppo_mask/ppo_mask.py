@@ -317,6 +317,8 @@ class MaskablePPO(OnPolicyAlgorithm):
                         for n, term in enumerate(self.multistep_masking_terms):
                             actions = actions[0]
                             final_actions = actions
+                            # TODO - Retain values and log probs similar to actions
+                            # (not doing this may be equivalent to naive action masking)
                             selection = self.action_interpreter(actions)[n]
                             env.set_attr(term, selection)
 
