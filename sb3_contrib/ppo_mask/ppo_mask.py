@@ -266,10 +266,8 @@ class MaskablePPO(OnPolicyAlgorithm):
         """
         # Get action distribution and state value (which depend only on the observation)
         distribution, values = self.policy.get_distribution_and_values(obs)
-
         # Get initial action masks
         action_masks = get_action_masks(env)
-
         # Apply initial mask
         distribution.apply_masking(action_masks)
 
@@ -279,32 +277,23 @@ class MaskablePPO(OnPolicyAlgorithm):
 
         # Loop through the environment attributes that are set at each masking step
         for n, term in enumerate(self.multistep_masking_terms):
-
             # Actions are first (and only) item in array
             actions = actions[0]
-
             # Save the actions that have been taken so far
             saved_actions = actions
-
             # Interpret integer action into 'real' action/selection
             selection = self.action_interpreter(actions)[n]
-
             # Set the environment attribute to the selection
             env.set_attr(term, selection)
-
             # Get the new action masks (env mask function will use attribute that was set)
             action_masks = get_action_masks(env)
-
             # Reset logits to unmasked values
             distribution.apply_masking(None)
-
             # Apply new mask
             distribution.apply_masking(action_masks)
-
             # Get the new actions
             actions = distribution.get_actions(deterministic=deterministic)
             actions = actions.cpu().numpy()
-
             # Retain previously taken (masked) actions and add new masked actions
             # This step is necessary due to stochastic action sampling during training
             actions[0][:n + 1] = saved_actions[:n + 1]
