@@ -124,6 +124,26 @@ class MaskableActorCriticPolicy(BasePolicy):
 
         self._build(lr_schedule)
 
+    def get_distribution_and_values(self, obs: th.Tensor) -> MaskableDistribution:
+        """
+        Get the action distribution from the policy.
+
+        :param obs: Observation
+        :return: Action distribution
+        """
+        # Preprocess the observation if needed
+        features = self.extract_features(obs)
+        if self.share_features_extractor:
+            latent_pi, latent_vf = self.mlp_extractor(features)
+        else:
+            pi_features, vf_features = features
+            latent_pi = self.mlp_extractor.forward_actor(pi_features)
+            latent_vf = self.mlp_extractor.forward_critic(vf_features)
+        # Evaluate the values for the given observations
+        values = self.value_net(latent_vf)
+        distribution = self._get_action_dist_from_latent(latent_pi)
+        return distribution, values
+
     def forward(
         self,
         obs: th.Tensor,
@@ -138,17 +158,7 @@ class MaskableActorCriticPolicy(BasePolicy):
         :param action_masks: Action masks to apply to the action distribution
         :return: action, value and log probability of the action
         """
-        # Preprocess the observation if needed
-        features = self.extract_features(obs)
-        if self.share_features_extractor:
-            latent_pi, latent_vf = self.mlp_extractor(features)
-        else:
-            pi_features, vf_features = features
-            latent_pi = self.mlp_extractor.forward_actor(pi_features)
-            latent_vf = self.mlp_extractor.forward_critic(vf_features)
-        # Evaluate the values for the given observations
-        values = self.value_net(latent_vf)
-        distribution = self._get_action_dist_from_latent(latent_pi)
+        distribution, values = self.get_distribution_and_values(obs)
         if action_masks is not None:
             distribution.apply_masking(action_masks)
         actions = distribution.get_actions(deterministic=deterministic)

@@ -256,6 +256,64 @@ class MaskablePPO(OnPolicyAlgorithm):
 
         return total_timesteps, callback
 
+    def apply_multistep_masking(self, env, deterministic: bool = False) -> Tuple[th.Tensor, th.Tensor, th.Tensor]:
+        """
+        Apply masking to the environment, and return the actions that were taken.
+
+        :param env: The environment to apply masking to
+        :param deterministic: Whether to use deterministic actions
+        :return: The actions that were taken, and the values of the state, and the log probability of the actions
+        """
+        # Get action distribution and state value (which depend only on the observation)
+        distribution, values = self.policy.get_distribution_and_values(obs)
+
+        # Get initial action masks
+        action_masks = get_action_masks(env)
+
+        # Apply initial mask
+        distribution.apply_masking(action_masks)
+
+        # Get actions
+        actions = distribution.get_actions(deterministic=deterministic)
+        actions = actions.cpu().numpy()
+
+        # Loop through the environment attributes that are set at each masking step
+        for n, term in enumerate(self.multistep_masking_terms):
+
+            # Actions are first (and only) item in array
+            actions = actions[0]
+
+            # Save the actions that have been taken so far
+            saved_actions = actions
+
+            # Interpret integer action into 'real' action/selection
+            selection = self.action_interpreter(actions)[n]
+
+            # Set the environment attribute to the selection
+            env.set_attr(term, selection)
+
+            # Get the new action masks (env mask function will use attribute that was set)
+            action_masks = get_action_masks(env)
+
+            # Reset logits to unmasked values
+            distribution.apply_masking(None)
+
+            # Apply new mask
+            distribution.apply_masking(action_masks)
+
+            # Get the new actions
+            actions = distribution.get_actions(deterministic=deterministic)
+            actions = actions.cpu().numpy()
+
+            # Retain previously taken (masked) actions and add new masked actions
+            # This step is necessary due to stochastic action sampling during training
+            actions[0][:n + 1] = saved_actions[:n + 1]
+
+        # Get log prob of final actions
+        log_prob = distribution.log_prob(actions)
+
+        return actions, values, log_prob
+
     def collect_rollouts(
             self,
             env: VecEnv,
@@ -304,48 +362,18 @@ class MaskablePPO(OnPolicyAlgorithm):
                 # This is the only change related to invalid action masking
                 if use_masking:
 
-                    action_masks = get_action_masks(env)
-                    actions, values, log_probs = self.policy(
-                        obs_tensor,
-                        action_masks=action_masks,
-                        deterministic=False,
-                    )
-                    actions = actions.cpu().numpy()
-
-                    # If we are using multistep masking, we need to mask the action in steps
                     if self.multistep_masking:
+                        # Actions already sent to cpu
+                        actions, values, log_probs = self.apply_multistep_masking(env)
 
-                        # Loop through the environment attributes that are set at each masking step
-                        for n, term in enumerate(self.multistep_masking_terms):
-
-                            # Actions are first (and only) item in array
-                            actions = actions[0]
-
-                            # Save the actions that have been taken so far
-                            final_actions = actions
-
-                            # TODO - Retain values and log probs similar to actions
-                            # (not doing this may be equivalent to naive action masking)
-
-                            # Interpret integer action into 'real' action/selection
-                            selection = self.action_interpreter(actions)[n]
-
-                            # Set the environment attribute to the selection
-                            env.set_attr(term, selection)
-
-                            # Get the new action masks (env mask function will use attribute that was set)
-                            action_masks = get_action_masks(env)
-
-                            # Get the new actions
-                            actions, values, log_probs = self.policy(
-                                obs_tensor,
-                                action_masks=action_masks,
-                                deterministic=False,
-                            )
-                            actions = actions.cpu().numpy()
-
-                            # Retain previously taken (masked) actions and add new masked actions
-                            actions[0][:n + 1] = final_actions[:n + 1]
+                    else:
+                        action_masks = get_action_masks(env)
+                        actions, values, log_probs = self.policy(
+                            obs_tensor,
+                            action_masks=action_masks,
+                            deterministic=False,
+                        )
+                        actions = actions.cpu().numpy()
 
                 else:
                     actions, values, log_probs = self.policy(obs_tensor, action_masks=action_masks)
@@ -426,39 +454,15 @@ class MaskablePPO(OnPolicyAlgorithm):
         :return: the model's action and the next hidden state
             (used in recurrent policies)
         """
-        actions, states = self.policy.predict(observation, state, episode_start, deterministic,
-                                              action_masks=action_masks)
-
         # If we are using multistep masking, we need to mask the action in steps
         if self.multistep_masking:
 
-            # Loop through the environment attributes that are set at each masking step
-            for n, term in enumerate(self.multistep_masking_terms):
+            actions = self.apply_multistep_masking(env, observation)[0]
+            states = None
 
-                # Actions are first (and only) item in array
-                actions = actions[0]
-
-                # Save the actions that have been taken so far
-                final_actions = actions
-
-                # Interpret integer action into 'real' action/selection
-                selection = self.action_interpreter(actions)[n]
-
-                # Set the environment attribute to the selection
-                env.set_attr(term, selection)
-
-                # Get the new action masks (env mask function will use attribute that was set)
-                action_masks = get_action_masks(env)
-
-                # Get the new actions
-                actions, states = self.policy.predict(observation, state, episode_start, deterministic,
-                                                      action_masks=action_masks)
-
-                # Retain previously taken (masked) actions and add new masked actions
-                # This step is necessary as previously taken actions may change with each forward pass during training,
-                # even when the same mask is supplied and same observation.
-                # This is due to stochastic action sampling during training.
-                actions[0][:n + 1] = final_actions[:n + 1]
+        else:
+            actions, states = self.policy.predict(observation, state, episode_start, deterministic,
+                                                  action_masks=action_masks)
 
         return actions, states
 
